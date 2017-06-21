@@ -109,7 +109,7 @@ def reverse_generator_nlplike(nbr_symbols, max_length, nbr_cases, \
     std_dev: float, Normal distribution's standard deviation used to draw
       the lenght of sequence. Default = 1.0.
     alpha: float, Zipf's Law Distribution parameter. Should be greater than 1.0,
-      Default = 2.0. Usually for modelling natual text distribution is in
+      Default = 2.0. Usually for modelling natural text distribution is in
       the range [1.1-1.6].
 
   Yields:
