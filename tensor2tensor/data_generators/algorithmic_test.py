@@ -31,14 +31,14 @@ class AlgorithmicTest(tf.test.TestCase):
     counter = 0
     for d in algorithmic.identity_generator(3, 8, 10):
       counter += 1
-      self.assertEqual(d["inputs"], d["targets"])
+      self.assertEqual(d["inputs"] + [1], d["targets"])
     self.assertEqual(counter, 10)
 
   def testReverseGenerator(self):
     counter = 0
     for d in algorithmic.reverse_generator(3, 8, 10):
       counter += 1
-      self.assertEqual(list(reversed(d["inputs"])), d["targets"])
+      self.assertEqual(list(reversed(d["inputs"])) + [1], d["targets"])
     self.assertEqual(counter, 10)
 
   def testReverseGeneratorNlpLike(self):
@@ -70,9 +70,9 @@ class AlgorithmicTest(tf.test.TestCase):
     counter = 0
     for d in algorithmic.addition_generator(4, 8, 10):
       counter += 1
-      self.assertEqual(d["inputs"].count(5), 1)
+      self.assertEqual(d["inputs"].count(6), 1)
       self.assertEqual(d["inputs"].count(0), 0)
-      self.assertEqual(d["targets"].count(5), 0)
+      self.assertEqual(d["targets"].count(6), 0)
       self.assertEqual(d["targets"].count(0), 0)
     self.assertEqual(counter, 10)
 
@@ -80,9 +80,9 @@ class AlgorithmicTest(tf.test.TestCase):
     counter = 0
     for d in algorithmic.multiplication_generator(4, 8, 10):
       counter += 1
-      self.assertEqual(d["inputs"].count(5), 1)
+      self.assertEqual(d["inputs"].count(6), 1)
       self.assertEqual(d["inputs"].count(0), 0)
-      self.assertEqual(d["targets"].count(5), 0)
+      self.assertEqual(d["targets"].count(6), 0)
       self.assertEqual(d["targets"].count(0), 0)
     self.assertEqual(counter, 10)
 
