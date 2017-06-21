@@ -41,6 +41,13 @@ class AlgorithmicTest(tf.test.TestCase):
       self.assertEqual(list(reversed(d["inputs"])), d["targets"])
     self.assertEqual(counter, 10)
 
+  def testReverseGeneratorNlpLike(self):
+    counter = 0
+    for d in algorithmic.reverse_generator_nlplike(3, 8, 10):
+      counter += 1
+      self.assertEqual(list(reversed(d["inputs"])), d["targets"])
+    self.assertEqual(counter, 10)
+
   def testLowerEndianToNumber(self):
     self.assertEqual(algorithmic.lower_endian_to_number([0], 2), 0)
     self.assertEqual(algorithmic.lower_endian_to_number([0], 7), 0)

@@ -51,7 +51,7 @@ IMAGE_DECODE_LENGTH = 100
 flags = tf.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_bool("registry_help", False,
+flags.DEFINE_bool("registry_help", True,
                   "If True, logs the contents of the registry and exits.")
 flags.DEFINE_string("master", "", "Address of TensorFlow master.")
 flags.DEFINE_string("schedule", "local_run",

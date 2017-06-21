@@ -91,6 +91,33 @@ def reverse_generator(nbr_symbols, max_length, nbr_cases):
     yield {"inputs": inputs, "targets": list(reversed(inputs))}
 
 
+def reverse_generator_nlplike(nbr_symbols, max_length, nbr_cases, \
+  std_dev=1, alpha=2):
+  """Generator for the reversing nlp-like task on sequences of symbols.
+
+  The length of the sequence is drawn from a Gaussian(Normal) distribution
+  at random from [1, max_length] and with std deviation of 10%,
+  then symbols are drawn from Zipf's law at random from [1, nbr_symbols] until
+  nbr_cases sequences have been produced.
+
+  Args:
+    nbr_symbols: number of symbols to use in each sequence.
+    max_length: integer, maximum length of sequences to generate.
+    nbr_cases: the number of cases to generate.
+    std_dev: integer, Normal distribution's standard deviation used to draw
+      the lenght of sequence.
+    alpha: float, Zipf's Law Distribution parameter. Should be greater than 1.0.
+
+  Yields:
+    A dictionary {"inputs": input-list, "targets": target-list} where
+    target-list is input-list reversed.
+  """
+  for _ in xrange(nbr_cases):
+    l = np.random.normal(loc=max_length, scale=(max_length//std_dev)) + 1
+    inputs = np.random.zipf(alpha, nbr_symbols)
+    yield {"inputs": inputs, "targets": list(reversed(inputs))}
+
+
 def lower_endian_to_number(l, base):
   """Helper function: convert a list of digits in the given base to a number."""
   return sum([d * (base**i) for i, d in enumerate(l)])
