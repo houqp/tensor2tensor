@@ -94,7 +94,7 @@ def reverse_generator(nbr_symbols, max_length, nbr_cases):
 
 
 def reverse_generator_nlplike(nbr_symbols, max_length, nbr_cases, \
-  std_dev=1, alpha=2):
+  std_dev=1.0, alpha=2.0):
   """Generator for the reversing nlp-like task on sequences of symbols.
 
   The length of the sequence is drawn from a Gaussian(Normal) distribution
@@ -106,9 +106,10 @@ def reverse_generator_nlplike(nbr_symbols, max_length, nbr_cases, \
     nbr_symbols: number of symbols to use in each sequence.
     max_length: integer, maximum length of sequences to generate.
     nbr_cases: the number of cases to generate.
-    std_dev: integer, Normal distribution's standard deviation used to draw
-      the lenght of sequence.
+    std_dev: float, Normal distribution's standard deviation used to draw
+      the lenght of sequence. Default = 1.
     alpha: float, Zipf's Law Distribution parameter. Should be greater than 1.0.
+      Default = 2.0.
 
   Yields:
     A dictionary {"inputs": input-list, "targets": target-list} where
