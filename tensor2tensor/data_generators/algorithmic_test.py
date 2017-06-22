@@ -43,7 +43,7 @@ class AlgorithmicTest(tf.test.TestCase):
 
   def testReverseGeneratorNlpLike(self):
     counter = 0
-    for d in algorithmic.reverse_generator_nlplike(3, 8, 10):
+    for d in algorithmic.reverse_generator_nlplike(8, 10):
       counter += 1
       self.assertEqual(list(reversed(d["inputs"])), d["targets"])
     self.assertEqual(counter, 10)
