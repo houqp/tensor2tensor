@@ -663,6 +663,8 @@ PROBLEM_HPARAMS_MAP = {
     "algorithmic_identity_decimal40": lambda p: algorithmic(12, p),
     "algorithmic_multiplication_binary40": lambda p: algorithmic(4, p),
     "algorithmic_multiplication_decimal40": lambda p: algorithmic(12, p),
+    "algorithmic_reverse_nlplike_decimal8K": lambda p: algorithmic(12, p),
+    "algorithmic_reverse_nlplike_decimal32K": lambda p: algorithmic(12, p),
     "algorithmic_reverse_binary40": lambda p: algorithmic(4, p),
     "algorithmic_reverse_decimal40": lambda p: algorithmic(12, p),
     "algorithmic_shift_decimal40": lambda p: algorithmic(22, p),

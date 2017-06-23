@@ -75,11 +75,11 @@ _SUPPORTED_PROBLEM_GENERATORS = {
         lambda: algorithmic.reverse_generator(10, 40, 100000),
         lambda: algorithmic.reverse_generator(10, 400, 10000)),
     "algorithmic_reverse_nlplike_decimal8K": (
-        lambda: algorithmic.reverse_generator_nlplike(40, 100000, 10, 1.4),
-        lambda: algorithmic.reverse_generator_nlplike(400, 10000, alpha=1.4)),
+        lambda: algorithmic.reverse_generator_nlplike(40, 100000, 10, 1.707),
+        lambda: algorithmic.reverse_generator_nlplike(400, 10000, 10, 1.707)),
     "algorithmic_reverse_nlplike_decimal32K": (
-        lambda: algorithmic.reverse_generator_nlplike(40, 100000, 10, 1.2),
-        lambda: algorithmic.reverse_generator_nlplike(400, 10000, alpha=1.2)),
+        lambda: algorithmic.reverse_generator_nlplike(40, 100000, 10, 1.461),
+        lambda: algorithmic.reverse_generator_nlplike(400, 10000, 10, 1.461)),
     "algorithmic_addition_binary40": (
         lambda: algorithmic.addition_generator(2, 40, 100000),
         lambda: algorithmic.addition_generator(2, 400, 10000)),
