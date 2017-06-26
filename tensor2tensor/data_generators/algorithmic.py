@@ -93,7 +93,40 @@ def reverse_generator(nbr_symbols, max_length, nbr_cases):
            "targets": list(reversed(inputs)) + [1]}  # [1] for EOS
 
 
-def reverse_generator_nlplike(max_length, nbr_cases, \
+def zipf_distribution(nbr_symbols, alpha):
+  """Helper function: Create a Zipf distribution.
+
+  Args:
+    nbr_symbols: number of symbols to use in the distribution.
+    alpha: float, Zipf's Law Distribution parameter. Default = 1.5.
+      Usually for modelling natural text distribution is in
+      the range [1.1-1.6].
+
+  Return:
+    distr_map: list of float, Zipf's distribution over nbr_symbols.
+
+  """
+  tmp = np.power(np.arange(1, nbr_symbols+1), -alpha)
+  zeta = np.r_[0.0, np.cumsum(tmp)]
+  return [x / zeta[-1] for x in zeta]
+
+
+def zipf_random_sample(distr_map, sample_len):
+  """Helper function: Generate a random Zipf sample of given lenght.
+
+  Args:
+    distr_map: list of float, Zipf's distribution over nbr_symbols.
+    sample_len: integer, length of sequence to generate.
+
+  Return:
+    sample: list of integer, Zipf's random sample over nbr_symbols.
+
+  """
+  u = np.random.random(sample_len)
+  return [t+1 for t in np.searchsorted(distr_map, u)] # 0 pad and 1 EOS
+
+
+def reverse_generator_nlplike(nbr_symbols, max_length, nbr_cases, \
   scale_std_dev=100, alpha=1.5):
   """Generator for the reversing nlp-like task on sequences of symbols.
 
@@ -107,21 +140,19 @@ def reverse_generator_nlplike(max_length, nbr_cases, \
     nbr_cases: the number of cases to generate.
     scale_std_dev: float, Normal distribution's standard deviation scale factor
       used to draw the lenght of sequence. Default = 1% of the max_length.
-    alpha: float, Zipf's Law Distribution parameter. Should be greater than 1.0,
-      Default = 1.5. Usually for modelling natural text distribution is in
+    alpha: float, Zipf's Law Distribution parameter. Default = 1.5.
+      Usually for modelling natural text distribution is in
       the range [1.1-1.6].
-
-  Note: the nbr_symbols is in function of the max_length and alpha parameters
-      as input to the Zipf's Law Distribution.
 
   Yields:
     A dictionary {"inputs": input-list, "targets": target-list} where
     target-list is input-list reversed.
   """
   std_dev = max_length / scale_std_dev
+  distr_map = zipf_distribution(nbr_symbols, alpha)
   for _ in xrange(nbr_cases):
-    l = int(np.random.normal(loc=max_length/2, scale=std_dev) + 1)
-    inputs = [np.random.zipf(alpha) + 2 for _ in xrange(l)]
+    l = int(abs(np.random.normal(loc=max_length/2, scale=std_dev)) + 1)
+    inputs = zipf_random_sample(distr_map, l)
     yield {"inputs": inputs,
            "targets": list(reversed(inputs)) + [1]}  # [1] for EOS
 
