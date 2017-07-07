@@ -5,8 +5,8 @@ pip install -e .
 # algorithmic_reverse_nlplike_decimal8K
 # algorithmic_multiplication_decimal40
 PROBLEM=algorithmic_multiplication_decimal40
-MODEL=baseline_lstm_seq2seq
-HPARAMS=basic_1
+MODEL=transformer
+HPARAMS=transformer_base_single_gpu
 
 DATA_DIR=$HOME/t2t_data
 TMP_DIR=/tmp/t2t_datagen
@@ -29,4 +29,6 @@ t2t-trainer \
   --model=$MODEL \
   --hparams_set=$HPARAMS \
   --output_dir=$TRAIN_DIR \
-  --hparams="optimizer=YellowFin"
+  --hparams="batch_size=512,optimizer=YellowFin"
+#  --hparams='batch_size=512'
+
