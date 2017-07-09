@@ -1,3 +1,19 @@
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+"""YellowFin for TensorFlow."""
 from __future__ import print_function
 
 import numpy as np
@@ -13,233 +29,431 @@ GATE_NONE = 0
 GATE_OP = 1
 GATE_GRAPH = 2
 
-class YFOptimizer(object):
-  def __init__(self, learning_rate=0.1, momentum=0.0, clip_thresh=None, beta=0.999, curv_win_width=20,
-    mu_update_interval=1, zero_debias=True, delta_mu=0.0):
-    '''
-    clip thresh is the threshold value on ||lr * gradient||
-    delta_mu can be place holder/variable/python scalar. They are used for additional
-    momentum in situations such as asynchronous-parallel training. The default is 0.0
-    for basic usage of the optimizer.
+
+class YellowFinOptimizer(object):
+  """Optimizer that implements the YellowFin algorithm.
+    See [Zhang et. al., 2017](https://arxiv.org/abs/1706.03471)
+    ([pdf](https://arxiv.org/pdf/1706.03471.pdf)).
+  """
+
+  def __init__(self,
+               learning_rate=0.1,
+               momentum=0.0,
+               clip_thresh=None,
+               beta=0.999,
+               curvature_window_width=20,
+               zero_debias=True,
+               delta_mu=0.0):
+    """Construct a new YellowFin optimizer.
+
     Args:
-      lr: python scalar. The initial value of learning rate, we use 1.0 in our paper.
-      mu: python scalar. The initial value of momentum, we use 0.0 in our paper.
-      clip_thresh: python scalar. The cliping threshold for tf.clip_by_global_norm.
-        if None, no clipping will be carried out.
-      beta: python scalar. The smoothing parameter for estimations.
-      delta_mu: for extensions. Not necessary in the basic use.
+      learning_rate: A Tensor or a floating point value.  The learning rate.
+      momentum: A Tensor or a floating point value.  The momentum.
+      clip_thresh: A Tensor or a floating point value. The cliping threshold for
+        tf.clip_by_global_norm.  If None, no clipping will be carried out.
+      beta: A float value or a constant float tensor.  The smoothing parameter
+        for estimations.
+      curvature_window_width: A int value or a constant int tensor.
+        The curvature window width.
+      zero_debias: A boolean, zero debias moving-averages.
+      delta_mu: For extensions. Not necessary in the basic use.
+
+    Note:
+      clip_thresh is the threshold value on ||lr * gradient||,
+      delta_mu can be place holder/variable/tensor scalar.
+      They are used for additional momentum in situations such as
+      asynchronous-parallel training.
+      The default is 0.0(or None) for basic usage of the optimizer.
+
     Other features:
       If you want to manually control the learning rates, self.lr_factor is
-      an interface to the outside, it is an multiplier for the internal learning rate
-      in YellowFin. It is helpful when you want to do additional hand tuning
-      or some decaying scheme to the tuned learning rate in YellowFin.
+      an interface to the outside, it is an multiplier for the internal
+      learning rate in YellowFin. It is helpful when you want to do additional
+      hand tuning or some decaying scheme to the tuned learning rate in
+      YellowFin.
       Example on using lr_factor can be found here:
       https://github.com/JianGoForIt/YellowFin/blob/master/char-rnn-tensorflow/train_YF.py#L140
-    '''
+    """
+    # Set lr and mu
     self._lr = learning_rate
     self._mu = momentum
 
-    self._lr_var = tf.Variable(learning_rate, dtype=tf.float32, name="YF_lr", trainable=False)
-    self._mu_var = tf.Variable(momentum, dtype=tf.float32, name="YF_mu", trainable=False)
-    # for step scheme or decaying scheme for the learning rates
-    self.lr_factor = tf.Variable(1.0, dtype=tf.float32, name="YF_lr_factor", trainable=False)
+    # Set lr and mu tensor
+    self._lr_var = tf.Variable(learning_rate,
+                               dtype=tf.float32,
+                               name="YF_lr",
+                               trainable=False)
+    self._mu_var = tf.Variable(momentum,
+                               dtype=tf.float32,
+                               name="YF_mu",
+                               trainable=False)
+
+    # Tuning factor for learning rates step or decaying scheme
+    self.lr_factor = tf.Variable(1.0,
+                                 dtype=tf.float32,
+                                 name="YF_lr_factor",
+                                 trainable=False)
+
+    # Gradient Clipping Threshold
     if clip_thresh is not None:
-      self._clip_thresh_var = tf.Variable(clip_thresh, dtype=tf.float32, name="YF_clip_thresh", trainable=False)
+      self._clip_thresh_var = tf.Variable(clip_thresh,
+                                          dtype=tf.float32,
+                                          name="YF_clip_thresh",
+                                          trainable=False)
     else:
       self._clip_thresh_var = None
 
-    # the underlying momentum optimizer
-    self._optimizer = \
-      tf.train.MomentumOptimizer(self._lr_var * self.lr_factor, self._mu_var + delta_mu)
+    # Set initial lr and mu for momentum
+    self._lr_m = self._lr_var * self.lr_factor
+    self._mu_m = self._mu_var + delta_mu
 
-    # moving average for statistics
+    # Init momentum optimizer
+    self._momentum_optimizer = \
+      tf.train.MomentumOptimizer(self._lr_m, self._mu_m)
+
+    # Moving average for statistics
     self._beta = beta
     self._moving_averager = None
 
-    # for global step counting
-    self._global_step = tf.Variable(0, trainable=False)
+    # Step counting
+    self._step = tf.Variable(0, trainable=False)
 
-    # for conditional tuning
-    self._do_tune = tf.greater(self._global_step, tf.constant(0) )
+    # For conditional tuning
+    self._do_tune = tf.greater(self._step, tf.constant(0))
 
+    # Moving-averages
     self._zero_debias = zero_debias
 
-    self._tvars = None
-
-    # for curvature range
-    self._curv_win_width = curv_win_width
+    # For curvature range
+    self.curvature_window_width = curvature_window_width
     self._curv_win = None
 
+    # Gradients and Variables
+    self._grad = None
+    self._vars = None
 
-  def curvature_range(self):
-    # set up the curvature window
+    # Get per var g**2, norm**2 and mean(norm**2)
+    self._grad_squared = None
+    self._grad_norm_squared = None
+    self._grad_norm_squared_avg = None
+
+    # Mean(grad) and Mean(grad**2) to compute Variance
+    self._grad_avg = None
+    self._grad_avg_squared = None
+
+    # Max and Min curvature variations
+    self._h_max_t = None
+    self._h_min_t = None
+    self._h_min = None
+    self._h_max = None
+
+    # Gradient Expected Variance
+    self._grad_var = None
+
+    # Gradient Norm and Mean(Gradient Norm)
+    self._grad_norm = None
+    self._grad_norm_avg = None
+
+    # Distance to optimum and Mean(Distance to optimum)
+    self._d_t = None
+    self._dist_to_opt_avg = None
+
+    # Maintains moving averages of variables
+    # by employing an exponential decay(Beta),
+    # and (zero_devias) moving-averages.
+    self._moving_averager = None
+
+
+  def _curvature_range(self):
+    """Curvature range
+
+    Return:
+      h_max_t, h_min_t ops
+    """
     self._curv_win = \
-      tf.Variable(np.zeros( [self._curv_win_width, ] ), dtype=tf.float32, name="curv_win", trainable=False)
-    self._curv_win = tf.scatter_update(self._curv_win,
-      self._global_step % self._curv_win_width, self._grad_norm_squared)
-    # note here the iterations start from iteration 0
-    valid_window = tf.slice(self._curv_win, tf.constant( [0, ] ),
-      tf.expand_dims(tf.minimum(tf.constant(self._curv_win_width), self._global_step + 1), dim=0) )
+      tf.Variable(np.zeros([self.curvature_window_width, ]),
+                  dtype=tf.float32,
+                  name="curv_win",
+                  trainable=False)
+
+    self._curv_win = \
+      tf.scatter_update(self._curv_win,
+                        self._step % self.curvature_window_width,
+                        self._grad_norm_squared)
+    # Note here the iterations start from iteration 0
+    valid_window = tf.slice(self._curv_win,
+                            tf.constant([0, ]),
+                            tf.expand_dims( \
+                              tf.minimum( \
+                                tf.constant(self.curvature_window_width), \
+                                         self._step + 1),
+                              dim=0))
     self._h_min_t = tf.reduce_min(valid_window)
     self._h_max_t = tf.reduce_max(valid_window)
 
     curv_range_ops = []
-    with tf.control_dependencies([self._h_min_t, self._h_max_t] ):
-      avg_op = self._moving_averager.apply([self._h_min_t, self._h_max_t] )
-      with tf.control_dependencies([avg_op] ):
-        self._h_min = tf.identity(self._moving_averager.average(self._h_min_t) )
-        self._h_max = tf.identity(self._moving_averager.average(self._h_max_t) )
+    with tf.control_dependencies([self._h_min_t, self._h_max_t]):
+      avg_op = self._moving_averager.apply([self._h_min_t, self._h_max_t])
+      with tf.control_dependencies([avg_op]):
+        self._h_min = tf.identity(self._moving_averager.average(self._h_min_t))
+        self._h_max = tf.identity(self._moving_averager.average(self._h_max_t))
     curv_range_ops.append(avg_op)
-    return curv_range_ops
+    return curv_range_ops # h_max_t, h_min_t
 
 
-  def grad_variance(self):
+  def _grad_variance(self):
+    """Estimate of gradient Variance
+
+    Return:
+      C_t ops
+    """
     grad_var_ops = []
     tensor_to_avg = []
-    for t, g in zip(self._tvars, self._grads):
+    for t, g in zip(self._vars, self._grad):
       if isinstance(g, ops.IndexedSlices):
-        tensor_to_avg.append(tf.reshape(tf.unsorted_segment_sum(g.values, g.indices, g.dense_shape[0] ), shape=t.get_shape() ) )
+        tensor_to_avg.append( \
+          tf.reshape(tf.unsorted_segment_sum(g.values, g.indices, g.dense_shape[0]),
+                     shape=t.get_shape()))
       else:
         tensor_to_avg.append(g)
     avg_op = self._moving_averager.apply(tensor_to_avg)
     grad_var_ops.append(avg_op)
-    with tf.control_dependencies([avg_op] ):
+    with tf.control_dependencies([avg_op]):
       self._grad_avg = [self._moving_averager.average(val) for val in tensor_to_avg]
       self._grad_avg_squared = [tf.square(val) for val in self._grad_avg]
-    self._grad_var = self._grad_norm_squared_avg - tf.add_n( [tf.reduce_sum(val) for val in self._grad_avg_squared] )
-    return grad_var_ops
+      self._grad_avg_squared = tf.add_n([tf.reduce_sum(val) for val in self._grad_avg_squared])
+    # Compute Variance
+    self._grad_var = self._grad_norm_squared_avg - self._grad_avg_squared
+    return grad_var_ops # C_t
 
 
-  def dist_to_opt(self):
+  def _dist_to_opt(self):
+    """Distance to optimum
+
+    Return:
+      D_t ops
+    """
     dist_to_opt_ops = []
-    # running average of the norm of gradeint
+    # Running average of the norm of gradeint
     self._grad_norm = tf.sqrt(self._grad_norm_squared)
-    avg_op = self._moving_averager.apply([self._grad_norm,] )
-    dist_to_opt_ops.append(avg_op)
-    with tf.control_dependencies([avg_op] ):
-      self._grad_norm_avg = self._moving_averager.average(self._grad_norm)
-      # single iteration distance estimation, note here self._grad_norm_avg is per variable
-      self._dist_to_opt = self._grad_norm_avg / self._grad_norm_squared_avg
-    # running average of distance
-    avg_op = self._moving_averager.apply([self._dist_to_opt] )
+    avg_op = self._moving_averager.apply([self._grad_norm, ])
     dist_to_opt_ops.append(avg_op)
     with tf.control_dependencies([avg_op]):
-      self._dist_to_opt_avg = tf.identity(self._moving_averager.average(self._dist_to_opt) )
+      self._grad_norm_avg = self._moving_averager.average(self._grad_norm)
+      # Single iteration distance estimation, note here
+      # self._grad_norm_avg is per variable
+      self._d_t = self._grad_norm_avg / self._grad_norm_squared_avg
+    # Running average of distance
+    avg_op = self._moving_averager.apply([self._d_t])
+    dist_to_opt_ops.append(avg_op)
+    with tf.control_dependencies([avg_op]):
+      self._dist_to_opt_avg = \
+        tf.identity(self._moving_averager.average(self._d_t))
     return dist_to_opt_ops
 
 
-  def after_apply(self):
-    self._moving_averager = tf.train.ExponentialMovingAverage(decay=self._beta, zero_debias=self._zero_debias)
-    assert self._grads != None and len(self._grads) > 0
-    after_apply_ops = []
+  def prepare_variables(self):
+    """Prepare Variables for YellowFin
 
-    # get per var g**2 and norm**2
+    Return:
+      YF ops
+      (Curvature_range,
+       Grad_variance,
+       Dist_to_opt,
+       Single-Step,
+       Auto-tuning)
+    """
+    self._moving_averager =  \
+      tf.train.ExponentialMovingAverage(decay=self._beta,
+                                        zero_debias=self._zero_debias)
+    assert self._grad != None and len(self._grad) > 0
+    # List for the returned Operations
+    prepare_variables_op = []
+
+    # Get per var g**2 and norm**2
     self._grad_squared = []
     self._grad_norm_squared = []
-    for v, g in zip(self._tvars, self._grads):
+
+    # Gradient squared
+    for v, g in zip(self._vars, self._grad):
       if g is None: continue
       with ops.colocate_with(v):
-        self._grad_squared.append(tf.square(g) )
-    self._grad_norm_squared = [tf.reduce_sum(grad_squared) for grad_squared in self._grad_squared]
+        self._grad_squared.append(tf.square(g))
 
-    # the following running average on squared norm of gradient is shared by grad_var and dist_to_opt
+    # Norm squared
+    self._grad_norm_squared = [tf.reduce_sum(g_sq) \
+                              for g_sq in self._grad_squared]
+
+    # The following running average on squared norm of gradient
+    # is shared by grad_var and dist_to_opt
     avg_op = self._moving_averager.apply(self._grad_norm_squared)
-    with tf.control_dependencies([avg_op] ):
-      self._grad_norm_squared_avg = [self._moving_averager.average(val) for val in self._grad_norm_squared]
+
+    with tf.control_dependencies([avg_op]):
+      self._grad_norm_squared_avg = \
+        [self._moving_averager.average(val) for val in self._grad_norm_squared]
       self._grad_norm_squared = tf.add_n(self._grad_norm_squared)
       self._grad_norm_squared_avg = tf.add_n(self._grad_norm_squared_avg)
-    after_apply_ops.append(avg_op)
 
-    with tf.control_dependencies([avg_op] ):
-      curv_range_ops = self.curvature_range()
-      after_apply_ops += curv_range_ops
-      grad_var_ops = self.grad_variance()
-      after_apply_ops += grad_var_ops
-      dist_to_opt_ops = self.dist_to_opt()
-      after_apply_ops += dist_to_opt_ops
+    prepare_variables_op.append(avg_op)
 
-    return tf.group(*after_apply_ops)
+    with tf.control_dependencies([avg_op]):
+      #Curvature range ops
+      curv_range_ops = self._curvature_range()
+      prepare_variables_op.append(curv_range_ops)
+      # Estimate of gradient Variance ops
+      grad_var_ops = self._grad_variance()
+      prepare_variables_op.append(grad_var_ops)
+      # EDistance to optimum ops
+      dist_to_opt_ops = self._dist_to_opt()
+      prepare_variables_op.append(dist_to_opt_ops)
+
+    return tf.group(*prepare_variables_op)
 
 
-  def get_lr_tensor(self):
+  def _get_lr_tensor(self):
+    """Get lr minimzing the surrogate"""
     lr = (1.0 - tf.sqrt(self._mu) )**2 / self._h_min
     return lr
 
 
-  def get_mu_tensor(self):
+  def _get_mu_tensor(self):
+    """Get the min mu which minimize the surrogate"""
     const_fact = self._dist_to_opt_avg**2 * self._h_min**2 / 2 / self._grad_var
     coef = tf.Variable([-1.0, 3.0, 0.0, 1.0], dtype=tf.float32, name="cubic_solver_coef")
     coef = tf.scatter_update(coef, tf.constant(2), -(3 + const_fact) )
     roots = tf.py_func(np.roots, [coef], Tout=tf.complex64, stateful=False)
 
-    # filter out the correct root
-    root_idx = tf.logical_and(tf.logical_and(tf.greater(tf.real(roots), tf.constant(0.0) ),
-      tf.less(tf.real(roots), tf.constant(1.0) ) ), tf.less(tf.abs(tf.imag(roots) ), 1e-5) )
-    # in case there are two duplicated roots satisfying the above condition
-    root = tf.reshape(tf.gather(tf.gather(roots, tf.where(root_idx) ), tf.constant(0) ), shape=[] )
-    tf.assert_equal(tf.size(root), tf.constant(1) )
+    # Filter out the correct root
+    root_idx = tf.logical_and( \
+      tf.logical_and( \
+        tf.greater(tf.real(roots), tf.constant(0.0)), \
+        tf.less(tf.real(roots), tf.constant(1.0))), \
+      tf.less(tf.abs(tf.imag(roots)), 1e-5))
+
+    # In case there are two duplicated roots satisfying the above condition
+    root = tf.reshape(tf.gather(tf.gather(roots, tf.where(root_idx)),
+                      tf.constant(0)),
+                      shape=[])
+
+    # Never Evaluated
+    #tf.assert_equal(tf.size(root), tf.constant(1))
 
     dr = self._h_max / self._h_min
-    mu = tf.maximum(tf.real(root)**2, ( (tf.sqrt(dr) - 1)/(tf.sqrt(dr) + 1) )**2)
+    mu = tf.maximum(tf.real(root)**2, ((tf.sqrt(dr) - 1)/(tf.sqrt(dr) + 1))**2)
     return mu
 
 
-  def update_hyper_param(self):
-    assign_hyper_ops = []
-    self._mu = tf.identity(tf.cond(self._do_tune, lambda: self.get_mu_tensor(),
-      lambda: self._mu_var) )
-    with tf.control_dependencies([self._mu] ):
-      self._lr = tf.identity(tf.cond(self._do_tune, lambda: self.get_lr_tensor(),
-        lambda: self._lr_var) )
+  def yellowfin(self):
+    # List for the returned Operations
+    yellowfin_ops = []
 
-    with tf.control_dependencies([self._mu, self._lr] ):
+    # # Curvature range ops
+    # curv_range_ops = self._curvature_range()
+    # yellowfin_ops.append(curv_range_ops)
+    # # Estimate of gradient Variance ops
+    # grad_var_ops = self._grad_variance()
+    # yellowfin_ops.append(grad_var_ops)
+    # # Distance to optimum ops
+    # dist_to_opt_ops = self._dist_to_opt()
+    # yellowfin_ops.append(dist_to_opt_ops)
+
+    # Single-Step: minimizes the surrogate for the expected
+    # squared distance from the optimum of a local quadratic
+    # approximation after a single step while keeping all directions in the
+    # robust region.
+    self._mu = tf.identity(tf.cond(self._do_tune, lambda: self._get_mu_tensor(),
+      lambda: self._mu_var))
+    with tf.control_dependencies([self._mu]):
+      self._lr = tf.identity(tf.cond(self._do_tune, lambda: self._get_lr_tensor(),
+        lambda: self._lr_var))
+
+    # Tune learning rate and momentum
+    with tf.control_dependencies([self._mu, self._lr]):
       self._mu = self._beta * self._mu_var + (1 - self._beta) * self._mu
       self._lr = self._beta * self._lr_var + (1 - self._beta) * self._lr
-      assign_hyper_ops.append(tf.assign(self._mu_var, self._mu) )
-      assign_hyper_ops.append(tf.assign(self._lr_var, self._lr) )
-    assign_hyper_op = tf.group(*assign_hyper_ops)
-    return assign_hyper_op
+      yellowfin_ops.append(tf.assign(self._mu_var, self._mu))
+      yellowfin_ops.append(tf.assign(self._lr_var, self._lr))
+
+    yellowfin_ops = tf.group(*yellowfin_ops)
+    return yellowfin_ops
 
 
-  def apply_gradients(self, grads_tvars, global_step=None, name=None):
-    self._grads, self._tvars = zip(*[(g,t) for g,t in grads_tvars if g is not None])
+  def apply_gradients(self, grads_and_vars, global_step=None):
+    """Applying gradients aand tune hyperparams with YellowFin
 
+    Args:
+      grads_and_vars: List of tuples (gradient, variable)
+      global_step: Dummy argument.
+
+    Return:
+        (A group of operations)
+        Variable Update with Momentum ops,
+        YellowFin ops(Curvature, Variance, Distance) ops,
+        SingleStep and lr_mu tuning ops,
+        Step increment ops.
+
+    """
+    self._grad, self._vars = zip(*[(g,t) for g,t in grads_and_vars if g is not None])
+
+    # Var Update with Momentum
     with tf.variable_scope("apply_updates"):
+      # Gradient Clipping?
       if self._clip_thresh_var is not None:
-        self._grads_clip, self._grads_norm = tf.clip_by_global_norm(self._grads, self._clip_thresh_var)
+        self._grads_clip, self._grads_norm = \
+          tf.clip_by_global_norm(self._grad, self._clip_thresh_var)
+
         apply_grad_op = \
-          self._optimizer.apply_gradients(zip(self._grads_clip, self._tvars) )
+          self._momentum_optimizer.apply_gradients( \
+            zip(self._grads_clip, self._vars))
       else:
         apply_grad_op = \
-          self._optimizer.apply_gradients(zip(self._grads, self._tvars) )
+          self._momentum_optimizer.apply_gradients( \
+            zip(self._grad, self._vars))
+
+    # Begin lr and mu tuning
+    with tf.variable_scope("prepare_yellowFin_variables"):
+      prepare_variables_op = self.prepare_variables()
+
+    with tf.variable_scope("yellowfin"):
+      with tf.control_dependencies([prepare_variables_op]):
+        yellowfin_op = self.yellowfin()
+
+    with tf.control_dependencies([yellowfin_op]):
+      increment_step_op = tf.assign(self._step, self._step + 1)
+
+    return tf.group(apply_grad_op,
+                    prepare_variables_op,
+                    yellowfin_op,
+                    increment_step_op)
 
 
-    with tf.variable_scope("after_apply"):
-      after_apply_op = self.after_apply()
-
-    with tf.variable_scope("update_hyper"):
-      with tf.control_dependencies( [after_apply_op] ):
-        update_hyper_op = self.update_hyper_param()
-
-    with tf.control_dependencies([update_hyper_op] ):
-      self._increment_global_step_op = tf.assign(self._global_step, self._global_step + 1)
-
-    return tf.group(apply_grad_op, after_apply_op, update_hyper_op, self._increment_global_step_op)
-
-
-  def compute_gradients(self, loss, var_list, global_step=None,
-                        gate_gradients=GATE_OP, aggregation_method=None,
-                        colocate_gradients_with_ops=False, name=None,
+  def compute_gradients(self,
+                        loss,
+                        var_list,
+                        global_step=None,
+                        gate_gradients=GATE_OP,
+                        aggregation_method=None,
+                        colocate_gradients_with_ops=False,
+                        name=None,
                         grad_loss=None):
-    return self._optimizer.compute_gradients(loss, var_list=var_list, gate_gradients=gate_gradients,
-                                             aggregation_method=aggregation_method,
-                                             colocate_gradients_with_ops=colocate_gradients_with_ops,
-                                             grad_loss=grad_loss)
+    """Compute gradients through momentum optimizer"""
+    return self._momentum_optimizer.compute_gradients( \
+      loss,
+      var_list=var_list,
+      gate_gradients=gate_gradients,
+      aggregation_method=aggregation_method,
+      colocate_gradients_with_ops=colocate_gradients_with_ops,
+      grad_loss=grad_loss)
 
 
-  def minimize(self, loss, global_step=None, var_list=None,
-               gate_gradients=GATE_OP, aggregation_method=None,
-               colocate_gradients_with_ops=False, name=None,
+  def minimize(self,
+               loss,
+               global_step=None,
+               var_list=None,
+               gate_gradients=GATE_OP,
+               aggregation_method=None,
+               colocate_gradients_with_ops=False,
+               name=None,
                grad_loss=None):
     """Adapted from Tensorflow Optimizer base class member function:
     Add operations to minimize `loss` by updating `var_list`.
@@ -248,8 +462,11 @@ class YFOptimizer(object):
     them call `tf.gradients()` and `self.apply_gradients()` explicitly instead
     of using this function.
     """
-    grads_and_vars = self._optimizer.compute_gradients(
-        loss, var_list=var_list, gate_gradients=gate_gradients,
+    grads_and_vars =  \
+      self._optimizer.compute_gradients( \
+        loss,
+        var_list=var_list,
+        gate_gradients=gate_gradients,
         aggregation_method=aggregation_method,
         colocate_gradients_with_ops=colocate_gradients_with_ops,
         grad_loss=grad_loss)
