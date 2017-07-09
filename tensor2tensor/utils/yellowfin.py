@@ -30,7 +30,7 @@ GATE_OP = 1
 GATE_GRAPH = 2
 
 
-class YellowFinOptimizer(object):
+class YellowFinOptimizer(tf.train.Optimizer):
   """Optimizer that implements the YellowFin algorithm.
     See [Zhang et. al., 2017](https://arxiv.org/abs/1706.03471)
     ([pdf](https://arxiv.org/pdf/1706.03471.pdf)).
@@ -116,7 +116,7 @@ class YellowFinOptimizer(object):
     self._moving_averager = None
 
     # Step counting
-    self._step = tf.Variable(0, name="YF_step", trainable=False)
+    self._step = tf.Variable(0, dtype=tf.int32, name="YF_step", trainable=False)
     self._increment_step_op = None
 
     # For conditional tuning
@@ -427,13 +427,16 @@ class YellowFinOptimizer(object):
       with tf.control_dependencies([prepare_variables_op]):
         yellowfin_op = self._yellowfin()
 
+    # with tf.control_dependencies([yellowfin_op]):
+    #   self._increment_step_op = tf.assign(self._step, self._step + 1)
     with tf.control_dependencies([yellowfin_op]):
-      self._increment_step_op = tf.assign(self._step, self._step + 1)
+      self._step = tf.assign(self._step, self._step + 1)
 
     return tf.group(apply_grad_op,
                     prepare_variables_op,
                     yellowfin_op,
-                    self._increment_step_op)
+                    self._step)
+                    # self._increment_step_op)
 
 
   def compute_gradients(self,
