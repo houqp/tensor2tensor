@@ -116,7 +116,8 @@ class YellowFinOptimizer(object):
     self._moving_averager = None
 
     # Step counting
-    self._step = tf.Variable(0, trainable=False)
+    self._step = tf.Variable(0, name="YF_step", trainable=False)
+    self._increment_step_op = None
 
     # For conditional tuning
     self._do_tune = tf.greater(self._step, tf.constant(0))
@@ -183,10 +184,10 @@ class YellowFinOptimizer(object):
     # Note here the iterations start from iteration 0
     valid_window = tf.slice(self._curv_win,
                             tf.constant([0, ]),
-                            tf.expand_dims( \
-                              tf.minimum( \
-                                tf.constant(self.curvature_window_width), \
-                                         self._step + 1),
+                            tf.expand_dims(
+                              tf.minimum(
+                                tf.constant(self.curvature_window_width),
+                                self._step + 1),
                               dim=0))
     self._h_min_t = tf.reduce_min(valid_window)
     self._h_max_t = tf.reduce_max(valid_window)
@@ -212,19 +213,23 @@ class YellowFinOptimizer(object):
     for t, g in zip(self._vars, self._grad):
       if isinstance(g, ops.IndexedSlices):
         tensor_to_avg.append( \
-          tf.reshape(tf.unsorted_segment_sum(g.values, g.indices, g.dense_shape[0]),
+          tf.reshape(tf.unsorted_segment_sum(g.values,
+                                             g.indices,
+                                             g.dense_shape[0]),
                      shape=t.get_shape()))
       else:
         tensor_to_avg.append(g)
     avg_op = self._moving_averager.apply(tensor_to_avg)
     grad_var_ops.append(avg_op)
     with tf.control_dependencies([avg_op]):
-      self._grad_avg = [self._moving_averager.average(val) for val in tensor_to_avg]
+      self._grad_avg = [self._moving_averager.average(val)
+                        for val in tensor_to_avg]
       self._grad_avg_squared = [tf.square(val) for val in self._grad_avg]
-      self._grad_avg_squared = tf.add_n([tf.reduce_sum(val) for val in self._grad_avg_squared])
+      self._grad_avg_squared = tf.add_n([tf.reduce_sum(val)
+                                         for val in self._grad_avg_squared])
     # Compute Variance
     self._grad_var = self._grad_norm_squared_avg - self._grad_avg_squared
-    return grad_var_ops # C_t
+    return grad_var_ops  # C_t
 
 
   def _dist_to_opt(self):
@@ -249,19 +254,14 @@ class YellowFinOptimizer(object):
     with tf.control_dependencies([avg_op]):
       self._dist_to_opt_avg = \
         tf.identity(self._moving_averager.average(self._d_t))
-    return dist_to_opt_ops
+    return dist_to_opt_ops  # D_t
 
 
-  def prepare_variables(self):
+  def _prepare_variables(self):
     """Prepare Variables for YellowFin
 
     Return:
-      YF ops
-      (Curvature_range,
-       Grad_variance,
-       Dist_to_opt,
-       Single-Step,
-       Auto-tuning)
+      Grad**2, Norm, Norm**2, Mean(Norm**2) ops
     """
     self._moving_averager =  \
       tf.train.ExponentialMovingAverage(decay=self._beta,
@@ -295,18 +295,6 @@ class YellowFinOptimizer(object):
       self._grad_norm_squared_avg = tf.add_n(self._grad_norm_squared_avg)
 
     prepare_variables_op.append(avg_op)
-
-    with tf.control_dependencies([avg_op]):
-      #Curvature range ops
-      curv_range_ops = self._curvature_range()
-      prepare_variables_op.append(curv_range_ops)
-      # Estimate of gradient Variance ops
-      grad_var_ops = self._grad_variance()
-      prepare_variables_op.append(grad_var_ops)
-      # EDistance to optimum ops
-      dist_to_opt_ops = self._dist_to_opt()
-      prepare_variables_op.append(dist_to_opt_ops)
-
     return tf.group(*prepare_variables_op)
 
 
@@ -319,16 +307,24 @@ class YellowFinOptimizer(object):
   def _get_mu_tensor(self):
     """Get the min mu which minimize the surrogate"""
     const_fact = self._dist_to_opt_avg**2 * self._h_min**2 / 2 / self._grad_var
-    coef = tf.Variable([-1.0, 3.0, 0.0, 1.0], dtype=tf.float32, name="cubic_solver_coef")
-    coef = tf.scatter_update(coef, tf.constant(2), -(3 + const_fact) )
-    roots = tf.py_func(np.roots, [coef], Tout=tf.complex64, stateful=False)
+    coef = tf.Variable([-1.0, 3.0, 0.0, 1.0],
+                       dtype=tf.float32,
+                       name="cubic_solver_coef")
+    coef = tf.scatter_update(coef,
+                             tf.constant(2),
+                             -(3 + const_fact))
+    roots = tf.py_func(np.roots,
+                       [coef],
+                       Tout=tf.complex64,
+                       stateful=False)
 
     # Filter out the correct root
-    root_idx = tf.logical_and( \
-      tf.logical_and( \
-        tf.greater(tf.real(roots), tf.constant(0.0)), \
-        tf.less(tf.real(roots), tf.constant(1.0))), \
-      tf.less(tf.abs(tf.imag(roots)), 1e-5))
+    root_idx = \
+      tf.logical_and(
+        tf.logical_and(
+          tf.greater(tf.real(roots), tf.constant(0.0)),
+          tf.less(tf.real(roots), tf.constant(1.0))),
+        tf.less(tf.abs(tf.imag(roots)), 1e-5))
 
     # In case there are two duplicated roots satisfying the above condition
     root = tf.reshape(tf.gather(tf.gather(roots, tf.where(root_idx)),
@@ -343,29 +339,41 @@ class YellowFinOptimizer(object):
     return mu
 
 
-  def yellowfin(self):
+  def _yellowfin(self):
+    """YellowFin auto-tuning optimizer based on momentum SGD
+
+    Return:
+      YF ops
+        (Curvature range,
+         Grad_variance,
+         Dist_to_opt,
+         Single-Step,
+         Auto-Tuning)
+    """
     # List for the returned Operations
     yellowfin_ops = []
 
-    # # Curvature range ops
-    # curv_range_ops = self._curvature_range()
-    # yellowfin_ops.append(curv_range_ops)
-    # # Estimate of gradient Variance ops
-    # grad_var_ops = self._grad_variance()
-    # yellowfin_ops.append(grad_var_ops)
-    # # Distance to optimum ops
-    # dist_to_opt_ops = self._dist_to_opt()
-    # yellowfin_ops.append(dist_to_opt_ops)
+    # Curvature range ops
+    curv_range_ops = self._curvature_range()
+    yellowfin_ops += curv_range_ops
+    # Estimate of gradient Variance ops
+    grad_var_ops = self._grad_variance()
+    yellowfin_ops += grad_var_ops
+    # Distance to optimum ops
+    dist_to_opt_ops = self._dist_to_opt()
+    yellowfin_ops += dist_to_opt_ops
 
     # Single-Step: minimizes the surrogate for the expected
     # squared distance from the optimum of a local quadratic
     # approximation after a single step while keeping all directions in the
     # robust region.
-    self._mu = tf.identity(tf.cond(self._do_tune, lambda: self._get_mu_tensor(),
-      lambda: self._mu_var))
+    self._mu = \
+      tf.identity(tf.cond(self._do_tune, lambda: self._get_mu_tensor(),
+                  lambda: self._mu_var))
     with tf.control_dependencies([self._mu]):
-      self._lr = tf.identity(tf.cond(self._do_tune, lambda: self._get_lr_tensor(),
-        lambda: self._lr_var))
+      self._lr = \
+        tf.identity(tf.cond(self._do_tune, lambda: self._get_lr_tensor(),
+                    lambda: self._lr_var))
 
     # Tune learning rate and momentum
     with tf.control_dependencies([self._mu, self._lr]):
@@ -378,7 +386,7 @@ class YellowFinOptimizer(object):
     return yellowfin_ops
 
 
-  def apply_gradients(self, grads_and_vars, global_step=None):
+  def apply_gradients(self, grads_and_vars, global_step=None, name=None):
     """Applying gradients aand tune hyperparams with YellowFin
 
     Args:
@@ -393,7 +401,8 @@ class YellowFinOptimizer(object):
         Step increment ops.
 
     """
-    self._grad, self._vars = zip(*[(g,t) for g,t in grads_and_vars if g is not None])
+    self._grad, self._vars = zip(*[(g, t)
+                                   for g, t in grads_and_vars if g is not None])
 
     # Var Update with Momentum
     with tf.variable_scope("apply_updates"):
@@ -412,19 +421,19 @@ class YellowFinOptimizer(object):
 
     # Begin lr and mu tuning
     with tf.variable_scope("prepare_yellowFin_variables"):
-      prepare_variables_op = self.prepare_variables()
+      prepare_variables_op = self._prepare_variables()
 
     with tf.variable_scope("yellowfin"):
       with tf.control_dependencies([prepare_variables_op]):
-        yellowfin_op = self.yellowfin()
+        yellowfin_op = self._yellowfin()
 
     with tf.control_dependencies([yellowfin_op]):
-      increment_step_op = tf.assign(self._step, self._step + 1)
+      self._increment_step_op = tf.assign(self._step, self._step + 1)
 
     return tf.group(apply_grad_op,
                     prepare_variables_op,
                     yellowfin_op,
-                    increment_step_op)
+                    self._increment_step_op)
 
 
   def compute_gradients(self,

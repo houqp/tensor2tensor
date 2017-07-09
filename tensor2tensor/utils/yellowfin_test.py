@@ -14,6 +14,7 @@
 # ==============================================================================
 
 """YellowFin Test Module for TensorFlow."""
+
 #import os
 # os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 import tensorflow as tf
@@ -28,12 +29,12 @@ n_iter = 50
 
 def tune_everything(x0squared, C, T, gmin, gmax):
   # First tune based on dynamic range
-  if C==0:
-    dr=gmax/gmin
-    mustar=((np.sqrt(dr)-1)/(np.sqrt(dr)+1))**2
-    alpha_star = (1+np.sqrt(mustar))**2/gmax
+  if C == 0:
+    dr = gmax / gmin
+    mustar = ((np.sqrt(dr) - 1) / (np.sqrt(dr) + 1))**2
+    alpha_star = (1 + np.sqrt(mustar))**2/gmax
 
-    return alpha_star,mustar
+    return alpha_star, mustar
 
   dist_to_opt = x0squared
   grad_var = C
@@ -106,16 +107,18 @@ def test_measurement():
       g_avg = 0.999 * g_avg + 0.001 * (i + 1)
 
       target_h_max = 0.999 * target_h_max + 0.001 * (i + 1)**2*(n_dim + 1)
-      target_h_min = 0.999 * target_h_min + 0.001 * max(1, i + 2 - 20)**2*(n_dim + 1)
+      target_h_min = 0.999 * target_h_min +  \
+                     0.001 * max(1, i + 2 - 20)**2 * (n_dim + 1)
       target_var = g_norm_squared_avg - g_avg**2 * (n_dim + 1)
-      target_dist = 0.999 * target_dist + 0.001 * g_norm_avg / g_norm_squared_avg
+      target_dist = 0.999 * target_dist + \
+                    0.001 * g_norm_avg / g_norm_squared_avg
 
       # print "iter ", i, " h max ", res[1], target_h_max, " h min ", res[2], target_h_min, \
       #   " var ", res[3], target_var, " dist ", res[4], target_dist
-      assert np.abs(target_h_max - res[1] ) < np.abs(target_h_max) * 1e-3
-      assert np.abs(target_h_min - res[2] ) < np.abs(target_h_min) * 1e-3
-      assert np.abs(target_var - res[3] ) < np.abs(res[3] ) * 1e-3
-      assert np.abs(target_dist - res[4] ) < np.abs(res[4] ) * 1e-3
+      assert np.abs(target_h_max - res[1]) < np.abs(target_h_max) * 1e-3
+      assert np.abs(target_h_min - res[2]) < np.abs(target_h_min) * 1e-3
+      assert np.abs(target_var - res[3]) < np.abs(res[3]) * 1e-3
+      assert np.abs(target_dist - res[4]) < np.abs(res[4]) * 1e-3
   print "sync measurement test passed!"
 
 
@@ -157,8 +160,10 @@ def test_lr_mu():
     target_mu = 0.5
     for i in range(n_iter):
 
-      sess.run(tf.assign(w_grad_val, (i + 1) * np.ones( [n_dim, ], dtype=np.float32)))
-      sess.run(tf.assign(b_grad_val, (i + 1) * np.ones( [1, ], dtype=np.float32)))
+      sess.run(tf.assign(w_grad_val, (i + 1) * np.ones([n_dim, ],
+                                                       dtype=np.float32)))
+      sess.run(tf.assign(b_grad_val, (i + 1) * np.ones([1, ],
+                                                       dtype=np.float32)))
 
       res = sess.run([opt._curv_win,
                       opt._h_max,
@@ -179,12 +184,18 @@ def test_lr_mu():
       g_avg = 0.999 * g_avg + 0.001 * (i + 1)
 
       target_h_max = 0.999 * target_h_max + 0.001 * (i + 1)**2 * (n_dim + 1)
-      target_h_min = 0.999 * target_h_min + 0.001 * max(1, i + 2 - 20)**2 * (n_dim + 1)
+      target_h_min = 0.999 * target_h_min + \
+                     0.001 * max(1, i + 2 - 20)**2 * (n_dim + 1)
       target_var = g_norm_squared_avg - g_avg**2 * (n_dim + 1)
-      target_dist = 0.999 * target_dist + 0.001 * g_norm_avg / g_norm_squared_avg
+      target_dist = 0.999 * target_dist + \
+                    0.001 * g_norm_avg / g_norm_squared_avg
 
       if i > 0:
-        lr, mu = tune_everything(target_dist**2, target_var, 1, target_h_min, target_h_max)
+        lr, mu = tune_everything(target_dist**2,
+                                 target_var,
+                                 1,
+                                 target_h_min,
+                                 target_h_max)
         target_lr = 0.999 * target_lr + 0.001 * lr
         target_mu = 0.999 * target_mu + 0.001 * mu
 
@@ -207,21 +218,29 @@ if __name__ == "__main__":
     start = time.time()
     test_measurement()
     end = time.time()
-    print "GPU measurement test done in ", (end - start)/float(n_iter), " s/iter!"
+    print "GPU measurement test done in ", \
+          (end - start)/float(n_iter), \
+          " s/iter!"
   with tf.variable_scope("test_sync_lr_mu"):
     start = time.time()
     test_lr_mu()
     end = time.time()
-    print "GPU lr and mu test done in ", (end - start)/float(n_iter), " s/iter!"
+    print "GPU lr and mu test done in ", \
+          (end - start)/float(n_iter), \
+          " s/iter!"
 
   # test cpu mode
   with tf.variable_scope("test_sync_measurement_cpu"), tf.device("cpu:0"):
     start = time.time()
     test_measurement()
     end = time.time()
-    print "CPU measurement test done in ", (end - start)/float(n_iter), " s/iter!"
+    print "CPU measurement test done in ", \
+          (end - start)/float(n_iter), \
+          " s/iter!"
   with tf.variable_scope("test_sync_lr_mu_cpu"), tf.device("cpu:0"):
     start = time.time()
     test_lr_mu()
     end = time.time()
-    print "CPU lr and mu test done in ", (end - start)/float(n_iter), " s/iter!"
+    print "CPU lr and mu test done in ", \
+          (end - start)/float(n_iter), \
+          " s/iter!"
