@@ -25,6 +25,7 @@ from tensorflow.python.ops import variables
 from tensorflow.python.ops import state_ops
 from tensorflow.python.framework import ops
 
+
 # Values for gate_gradients.
 GATE_NONE = 0
 GATE_OP = 1
@@ -117,7 +118,11 @@ class YellowFinOptimizer(tf.train.Optimizer):
     self._moving_averager = None
 
     # Step counting
-    self._step = tf.Variable(0, dtype=tf.int32, name="YF_step", trainable=False)
+    self._step = tf.Variable(0,
+                             dtype=tf.int32,
+                             name="YF_step",
+                             trainable=False)
+    # YF_step + 1 op
     self._increment_step_op = None
 
     # For conditional tuning
@@ -169,7 +174,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
   def _curvature_range(self):
     """Curvature range
 
-    Return:
+    Returns:
       h_max_t, h_min_t ops
     """
     self._curv_win = \
@@ -206,7 +211,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
   def _grad_variance(self):
     """Estimate of gradient Variance
 
-    Return:
+    Returns:
       C_t ops
     """
     grad_var_ops = []
@@ -236,7 +241,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
   def _dist_to_opt(self):
     """Distance to optimum
 
-    Return:
+    Returns:
       D_t ops
     """
     dist_to_opt_ops = []
@@ -261,7 +266,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
   def _prepare_variables(self):
     """Prepare Variables for YellowFin
 
-    Return:
+    Returns:
       Grad**2, Norm, Norm**2, Mean(Norm**2) ops
     """
     self._moving_averager =  \
@@ -300,13 +305,21 @@ class YellowFinOptimizer(tf.train.Optimizer):
 
 
   def _get_lr_tensor(self):
-    """Get lr minimzing the surrogate"""
+    """Get lr minimzing the surrogate
+
+    Returns:
+      lr_t
+    """
     lr = (1.0 - tf.sqrt(self._mu) )**2 / self._h_min
     return lr
 
 
   def _get_mu_tensor(self):
-    """Get the min mu which minimize the surrogate"""
+    """Get the min mu which minimize the surrogate
+
+    Returns:
+      mu_t
+    """
     const_fact = self._dist_to_opt_avg**2 * self._h_min**2 / 2 / self._grad_var
     coef = tf.Variable([-1.0, 3.0, 0.0, 1.0],
                        dtype=tf.float32,
@@ -343,7 +356,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
   def _yellowfin(self):
     """YellowFin auto-tuning optimizer based on momentum SGD
 
-    Return:
+    Returns:
       YF ops
         (Curvature range,
          Grad_variance,
@@ -352,6 +365,8 @@ class YellowFinOptimizer(tf.train.Optimizer):
          Auto-Tuning)
     """
     # List for the returned Operations
+    # Note: NEVER use list.append() to append ops!!!
+    #   Instead use -> list += ops.
     yellowfin_ops = []
 
     # Curvature range ops
@@ -391,10 +406,14 @@ class YellowFinOptimizer(tf.train.Optimizer):
     """Applying gradients aand tune hyperparams with YellowFin
 
     Args:
-      grads_and_vars: List of tuples (gradient, variable)
-      global_step: Dummy argument.
+      grads_and_vars: List of (gradient, variable) pairs as returned by
+        compute_gradients().
+      global_step: Optional Variable to increment by one after the
+        variables have been updated.
+      name:  Optional name for the returned operation. Default to the
+        name passed to the Optimizer constructor.
 
-    Return:
+    Returns:
         (A group of operations)
         Variable Update with Momentum ops,
         YellowFin ops(Curvature, Variance, Distance) ops,
@@ -428,23 +447,21 @@ class YellowFinOptimizer(tf.train.Optimizer):
       with tf.control_dependencies([prepare_variables_op]):
         yellowfin_op = self._yellowfin()
 
-    # with tf.control_dependencies([yellowfin_op]):
-    #   self._increment_step_op = tf.assign(self._step, self._step + 1)
+    # Update YellowFin step variable
     with tf.control_dependencies([yellowfin_op]):
       self._increment_step_op = state_ops.assign_add(self._step, 1).op
 
-    # if global_step is not None:
-    #   with tf.control_dependencies([yellowfin_op]):
-    #     with ops.colocate_with(global_step):
-    #             global_step_op = state_ops.assign_add(global_step, 1).op
+    # Global_step variable Update
+    if global_step is not None:
+      with tf.control_dependencies([yellowfin_op]):
+        with ops.colocate_with(global_step):
+          global_step_op = state_ops.assign_add(global_step, 1).op
 
     return tf.group(apply_grad_op,
                     prepare_variables_op,
                     yellowfin_op,
-                    self._increment_step_op)
-                    #global_step_op)
-                    #self._step)
-
+                    self._increment_step_op,
+                    global_step_op)
 
 
   def compute_gradients(self,
@@ -456,7 +473,29 @@ class YellowFinOptimizer(tf.train.Optimizer):
                         colocate_gradients_with_ops=False,
                         name=None,
                         grad_loss=None):
-    """Compute gradients through momentum optimizer"""
+    """Compute gradients through momentum optimizer
+
+    Args:
+      loss: A Tensor containing the value to minimize.
+      var_list: Optional list or tuple of tf.Variable to update
+        to minimize loss. Defaults to the list of variables collected
+        in the graph under the key GraphKey.TRAINABLE_VARIABLES.
+      global_step: Optional Variable to increment by one after the
+        variables have been updated.
+      gate_gradients: How to gate the computation of gradients.
+        Can be GATE_NONE, GATE_OP, or GATE_GRAPH.
+      aggregation_method: Specifies the method used to combine
+        gradient terms. Valid values are defined in the class AggregationMethod.
+      colocate_gradients_with_ops: If True, try colocating gradients with
+        the corresponding op.
+      name: Optional name for the returned operation. Default to the name
+        passed to the Optimizer constructor.
+      grad_loss: Optional. A Tensor holding the gradient computed for loss.
+
+    Returns:
+      A list of (gradient, variable) pairs. Variable is always present,
+        but gradient can be None.
+    """
     return self._momentum_optimizer.compute_gradients( \
       loss,
       var_list=var_list,
@@ -481,8 +520,27 @@ class YellowFinOptimizer(tf.train.Optimizer):
     `apply_gradients()`. If you want to process the gradient before applying
     them call `tf.gradients()` and `self.apply_gradients()` explicitly instead
     of using this function.
+
+    Args:
+      loss: A Tensor containing the value to minimize.
+      global_step: Optional Variable to increment by one after the variables
+        have been updated.
+      var_list: Optional list or tuple of Variable objects to update to
+        minimize loss. Defaults to the list of variables collected in
+        the graph under the key GraphKeys.TRAINABLE_VARIABLES.
+      gate_gradients: How to gate the computation of gradients.
+        Can be GATE_NONE, GATE_OP, or GATE_GRAPH.
+      aggregation_method: Specifies the method used to combine gradient terms.
+        Valid values are defined in the class AggregationMethod.
+      colocate_gradients_with_ops: If True, try colocating gradients with
+        the corresponding op.
+      name: Optional name for the returned operation.
+      grad_loss: Optional. A Tensor holding the gradient computed for loss.
+
+    Returns:
+      An Operation that updates the variables in var_list.
+        If global_step was not None, that operation also increments global_step.
     """
-    print(global_step)
     grads_and_vars =  \
       self._optimizer.compute_gradients( \
         loss,
