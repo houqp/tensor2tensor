@@ -398,8 +398,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
       yellowfin_ops.append(tf.assign(self._mu_var, self._mu))
       yellowfin_ops.append(tf.assign(self._lr_var, self._lr))
 
-    yellowfin_ops = tf.group(*yellowfin_ops)
-    return yellowfin_ops
+    return tf.group(*yellowfin_ops)
 
 
   def apply_gradients(self, grads_and_vars, global_step=None, name=None):
@@ -433,11 +432,11 @@ class YellowFinOptimizer(tf.train.Optimizer):
 
         apply_grad_op = \
           self._momentum_optimizer.apply_gradients( \
-            zip(self._grads_clip, self._vars))
+            zip(self._grads_clip, self._vars), global_step=global_step)
       else:
         apply_grad_op = \
           self._momentum_optimizer.apply_gradients( \
-            zip(self._grad, self._vars))
+            zip(self._grad, self._vars), global_step=global_step)
 
     # Begin lr and mu tuning
     with tf.variable_scope("prepare_yellowFin_variables"):
@@ -451,17 +450,10 @@ class YellowFinOptimizer(tf.train.Optimizer):
     with tf.control_dependencies([yellowfin_op]):
       self._increment_step_op = state_ops.assign_add(self._step, 1).op
 
-    # Global_step variable Update
-    if global_step is not None:
-      with tf.control_dependencies([yellowfin_op]):
-        with ops.colocate_with(global_step):
-          global_step_op = state_ops.assign_add(global_step, 1).op
-
     return tf.group(apply_grad_op,
                     prepare_variables_op,
                     yellowfin_op,
-                    self._increment_step_op,
-                    global_step_op)
+                    self._increment_step_op)
 
 
   def compute_gradients(self,
@@ -560,4 +552,4 @@ class YellowFinOptimizer(tf.train.Optimizer):
       print("g ", g)
       print("v ", v)
 
-    return self.apply_gradients(grads_and_vars)
+    return self.apply_gradients(grads_and_vars, global_step=global_step)

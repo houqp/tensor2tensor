@@ -1143,7 +1143,7 @@ class _ConditionalOptimizer(tf.train.Optimizer):
       self._opt = tf.train.MomentumOptimizer(
           lr, momentum=hparams.optimizer_momentum_momentum)
     elif optimizer_name == "YellowFin":
-      print("Using YellowFin")
+      tf.logging.info("Init YellowFin Optimizer.")
       self._opt = YellowFinOptimizer(
           learning_rate=lr, momentum=hparams.optimizer_momentum_momentum)
     else:
