@@ -22,6 +22,7 @@ import tensorflow as tf
 from tensorflow.python.training import momentum
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables
+from tensorflow.python.ops import state_ops
 from tensorflow.python.framework import ops
 
 # Values for gate_gradients.
@@ -430,13 +431,20 @@ class YellowFinOptimizer(tf.train.Optimizer):
     # with tf.control_dependencies([yellowfin_op]):
     #   self._increment_step_op = tf.assign(self._step, self._step + 1)
     with tf.control_dependencies([yellowfin_op]):
-      self._step = tf.assign(self._step, self._step + 1)
+      self._increment_step_op = state_ops.assign_add(self._step, 1).op
+
+    # if global_step is not None:
+    #   with tf.control_dependencies([yellowfin_op]):
+    #     with ops.colocate_with(global_step):
+    #             global_step_op = state_ops.assign_add(global_step, 1).op
 
     return tf.group(apply_grad_op,
                     prepare_variables_op,
                     yellowfin_op,
-                    self._step)
-                    # self._increment_step_op)
+                    self._increment_step_op)
+                    #global_step_op)
+                    #self._step)
+
 
 
   def compute_gradients(self,
@@ -474,6 +482,7 @@ class YellowFinOptimizer(tf.train.Optimizer):
     them call `tf.gradients()` and `self.apply_gradients()` explicitly instead
     of using this function.
     """
+    print(global_step)
     grads_and_vars =  \
       self._optimizer.compute_gradients( \
         loss,
