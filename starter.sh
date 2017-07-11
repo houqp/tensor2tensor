@@ -35,4 +35,5 @@ t2t-trainer \
   --hparams_set=$HPARAMS \
   --output_dir=$TRAIN_DIR \
   --hparams="batch_size=512,optimizer=YellowFin"
+  # --hparams="batch_size=512,optimizer=YellowFin"
   # --hparams='batch_size=512'
